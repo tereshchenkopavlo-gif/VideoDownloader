@@ -102,14 +102,20 @@ class App(tk.Tk):
     def _download(self,url):
         q=self.quality_var.get(); fmt=self.format_var.get().lower()
         if q=="Audio only":
-            f="bestaudio/best"; post=[{"key":"FFmpegExtractAudio","preferredcodec":"mp3","preferredquality":"192"}]
+            f="bestaudio/best"
+            post=[{"key":"FFmpegExtractAudio","preferredcodec":"mp3","preferredquality":"192"}]
+            merge_format=None
         else:
             heights={"2160p":2160,"1440p":1440,"1080p":1080,"720p":720,"480p":480,"360p":360}
             f="bestvideo+bestaudio/best" if q=="Best" else f"bestvideo[height<={heights[q]}]+bestaudio/best[height<={heights[q]}]"
-            post=[{"key":"FFmpegMerger","preferredformat":fmt}]
+            post=[]
+            merge_format=fmt
         opts={"format":f,"outtmpl":str(Path(self.folder_var.get())/"%(title)s.%(ext)s"),
-              "merge_output_format":fmt,"progress_hooks":[self.progress],"noplaylist":False,
-              "postprocessors":post}
+              "progress_hooks":[self.progress],"noplaylist":False}
+        if merge_format:
+            opts["merge_output_format"]=merge_format
+        if post:
+            opts["postprocessors"]=post
         ff=resource_path("ffmpeg.exe")
         if os.path.exists(ff): opts["ffmpeg_location"]=str(Path(ff).parent)
         try:
