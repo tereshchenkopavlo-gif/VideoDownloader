@@ -4,7 +4,7 @@
 #define MyAppExeName "VideoDownloader.exe"
 
 [Setup]
-AppId={{C7A1A0A5-7F3D-4B4A-9D75-VD2100000001}
+AppId={{C7A1A0A5-7F3D-4B4A-9D75-210000000001}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
