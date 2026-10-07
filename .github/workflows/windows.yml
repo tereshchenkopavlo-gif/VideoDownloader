@@ -9,15 +9,18 @@ on:
 permissions:
   contents: write
 
-env:
-  APP_VERSION: "2.2.0"
-
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Read app version
+        shell: pwsh
+        run: |
+          $version = Select-String -Path app.py -Pattern 'APP_VERSION = "([^"]+)"' | ForEach-Object { $_.Matches[0].Groups[1].Value }
+          "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Set up Python
         uses: actions/setup-python@v5
