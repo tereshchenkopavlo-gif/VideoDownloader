@@ -12,7 +12,7 @@ import customtkinter as ctk
 import yt_dlp
 
 APP_NAME = "Video Downloader"
-APP_VERSION = "2.2.2"
+APP_VERSION = "2.2.3"
 GITHUB_REPO = "tereshchenkopavlo-gif/VideoDownloader"
 
 def resource_path(name):
@@ -232,7 +232,7 @@ class App(ctk.CTk):
         folder = Path(self.folder_var.get())
         speed_suffix = "" if speed == 1.0 else f" [{speed:.1f}x]"
         outtmpl = str(folder / f"%(title)s{speed_suffix}.%(ext)s")
-        opts = {"format": f, "outtmpl": outtmpl, "progress_hooks": [self.progress_hook], "noplaylist": False}
+        opts = {"format": f, "outtmpl": outtmpl, "progress_hooks": [self.progress_hook], "postprocessor_hooks": [self._postprocessor_hook], "noplaylist": False}
         if merge_format: opts["merge_output_format"] = merge_format
         if post: opts["postprocessors"] = post
         ff = resource_path("ffmpeg.exe")
@@ -288,12 +288,36 @@ class App(ctk.CTk):
             filename = Path(ydl.prepare_filename(info))
         return [filename.with_suffix(".mp3" if audio_only else f".{fmt}")]
 
+    def _postprocessor_hook(self, d):
+        if self.cancel_event.is_set():
+            raise yt_dlp.utils.DownloadError("Download cancelled by user.")
+
+    def _probe_duration(self, source):
+        ffprobe = resource_path("ffprobe.exe")
+        if not os.path.exists(ffprobe):
+            return 0.0
+        try:
+            result = subprocess.run(
+                [ffprobe, "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", str(source)],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0),
+                check=True,
+            )
+            return float(result.stdout.strip())
+        except Exception:
+            return 0.0
+
     def _change_speed(self, source, speed):
         ffmpeg = resource_path("ffmpeg.exe")
-        if not os.path.exists(ffmpeg): raise RuntimeError("FFmpeg is required to change playback speed.")
+        if not os.path.exists(ffmpeg):
+            raise RuntimeError("FFmpeg is required to change playback speed.")
+
         temp = source.with_name(source.stem + ".speedtmp" + source.suffix)
         ext = source.suffix.lower()
-        cmd = [ffmpeg, "-y", "-i", str(source)]
+        duration = self._probe_duration(source)
+
+        cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(source)]
         if ext == ".mp3":
             cmd += ["-filter:a", f"atempo={speed}", "-c:a", "libmp3lame", "-b:a", "192k"]
         else:
@@ -304,10 +328,68 @@ class App(ctk.CTk):
                 vcodec, acodec = "libx264", "aac"
                 extra = ["-crf", "20", "-preset", "medium", "-b:a", "192k"]
             cmd += ["-filter:v", f"setpts=PTS/{speed}", "-filter:a", f"atempo={speed}", "-c:v", vcodec, "-c:a", acodec] + extra
-        cmd += [str(temp)]
+        cmd += ["-progress", "pipe:1", "-nostats", str(temp)]
+
         self.after(0, self.status_var.set, f"Applying {speed:.1f}× speed…")
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True, creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0))
-        os.replace(temp, source)
+        self.after(0, self.progress_var.set, 0)
+        self.after(0, self.speed_status_var.set, "Processing with FFmpeg…")
+        self.after(0, self.eta_var.set, "")
+
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        process = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            bufsize=1, creationflags=creationflags,
+        )
+
+        try:
+            while True:
+                if self.cancel_event.is_set():
+                    process.terminate()
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                    raise yt_dlp.utils.DownloadError("Download cancelled by user.")
+
+                line = process.stdout.readline()
+                if line:
+                    line = line.strip()
+                    if line.startswith("out_time_ms=") and duration:
+                        try:
+                            current = int(line.split("=", 1)[1]) / 1_000_000
+                            pct = max(0.0, min(1.0, current / duration))
+                            self.after(0, self.progress_var.set, pct)
+                            self.after(0, self.speed_status_var.set, f"Applying {speed:.1f}× speed… {pct * 100:.0f}%")
+                        except ValueError:
+                            pass
+                    continue
+                if process.poll() is not None:
+                    break
+
+            stderr = process.stderr.read()
+            return_code = process.wait()
+            if return_code != 0:
+                raise RuntimeError(stderr.strip() or "FFmpeg failed while changing playback speed.")
+            if self.cancel_event.is_set():
+                raise yt_dlp.utils.DownloadError("Download cancelled by user.")
+            os.replace(temp, source)
+            self.after(0, self.progress_var.set, 1)
+            self.after(0, self.speed_status_var.set, "")
+        except Exception:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+            try:
+                if temp.exists():
+                    temp.unlink()
+            except OSError:
+                pass
+            raise
 
     def open_folder(self):
         p = str(Path(self.folder_var.get()).resolve())
