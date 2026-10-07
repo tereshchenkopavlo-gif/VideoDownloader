@@ -12,7 +12,7 @@ import customtkinter as ctk
 import yt_dlp
 
 APP_NAME = "Video Downloader"
-APP_VERSION = "2.2.1"
+APP_VERSION = "2.2.2"
 GITHUB_REPO = "tereshchenkopavlo-gif/VideoDownloader"
 
 def resource_path(name):
