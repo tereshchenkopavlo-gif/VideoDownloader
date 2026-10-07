@@ -1,5 +1,7 @@
 #define MyAppName "Video Downloader"
-#define MyAppVersion "2.1.0"
+#ifndef MyAppVersion
+#define MyAppVersion "2.2.0"
+#endif
 #define MyAppPublisher "Pavlo Tereshchenko"
 #define MyAppExeName "VideoDownloader.exe"
 
