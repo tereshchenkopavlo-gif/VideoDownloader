@@ -1,135 +1,259 @@
-import os, sys, threading, subprocess, tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+import os
+import sys
+import threading
+import subprocess
+import tkinter as tk
+from tkinter import filedialog, messagebox
 from pathlib import Path
+from urllib.request import Request, urlopen
+import json
+import re
+import customtkinter as ctk
 import yt_dlp
 
 APP_NAME = "Video Downloader"
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
+GITHUB_REPO = "tereshchenkopavlo-gif/VideoDownloader"
 
 def resource_path(name):
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
     return str(base / name)
 
-class App(tk.Tk):
+def version_tuple(value):
+    nums = re.findall(r"\d+", str(value))
+    return tuple(int(x) for x in nums[:3]) if nums else (0, 0, 0)
+
+class App(ctk.CTk):
     def __init__(self):
         super().__init__()
+        ctk.set_appearance_mode("System")
+        ctk.set_default_color_theme("blue")
         self.title(f"{APP_NAME} {APP_VERSION}")
-        self.geometry("900x620")
-        self.minsize(760, 520)
+        self.geometry("980x720")
+        self.minsize(850, 650)
         self.url_var = tk.StringVar()
         self.folder_var = tk.StringVar(value=str(Path.home() / "Downloads"))
         self.quality_var = tk.StringVar(value="Best")
         self.format_var = tk.StringVar(value="MP4")
+        self.speed_var = tk.StringVar(value="1.0×")
         self.status_var = tk.StringVar(value="Ready")
         self.progress_var = tk.DoubleVar(value=0)
-        self.speed_var = tk.StringVar(value="")
+        self.speed_status_var = tk.StringVar(value="")
         self.eta_var = tk.StringVar(value="")
         self._build()
+        self.after(1500, lambda: threading.Thread(target=self.check_updates, args=(True,), daemon=True).start())
+
     def _build(self):
-        pad = {"padx": 14, "pady": 8}
-        title = ttk.Label(self, text="▶ Video Downloader", font=("Segoe UI", 20, "bold"))
-        title.pack(anchor="w", **pad)
-        ttk.Label(self, text="Download videos supported by yt-dlp.").pack(anchor="w", padx=14)
-        box = ttk.LabelFrame(self, text="Video URL")
-        box.pack(fill="x", **pad)
-        row = ttk.Frame(box); row.pack(fill="x", padx=10, pady=10)
-        ttk.Entry(row, textvariable=self.url_var).pack(side="left", fill="x", expand=True)
-        ttk.Button(row, text="Paste", command=self.paste).pack(side="left", padx=6)
-        ttk.Button(row, text="Get info", command=self.info).pack(side="left")
-        opts = ttk.LabelFrame(self, text="Options")
-        opts.pack(fill="x", **pad)
-        grid = ttk.Frame(opts); grid.pack(fill="x", padx=10, pady=10)
-        ttk.Label(grid, text="Quality").grid(row=0,column=0,sticky="w")
-        ttk.Combobox(grid,textvariable=self.quality_var,state="readonly",
-                     values=["Best","2160p","1440p","1080p","720p","480p","360p","Audio only"],width=14).grid(row=0,column=1,padx=8)
-        ttk.Label(grid, text="Format").grid(row=0,column=2,sticky="w")
-        ttk.Combobox(grid,textvariable=self.format_var,state="readonly",
-                     values=["MP4","MKV","WEBM"],width=10).grid(row=0,column=3,padx=8)
-        ttk.Label(grid, text="Folder").grid(row=1,column=0,sticky="w",pady=(10,0))
-        ttk.Entry(grid,textvariable=self.folder_var).grid(row=1,column=1,columnspan=2,sticky="ew",pady=(10,0))
-        ttk.Button(grid,text="Browse…",command=self.browse).grid(row=1,column=3,padx=8,pady=(10,0))
-        grid.columnconfigure(1,weight=1); grid.columnconfigure(2,weight=1)
-        info = ttk.LabelFrame(self, text="Information")
-        info.pack(fill="x", **pad)
-        self.info_text = tk.Text(info,height=5,wrap="word",state="disabled")
-        self.info_text.pack(fill="x",padx=10,pady=10)
-        actions = ttk.Frame(self); actions.pack(fill="x", **pad)
-        ttk.Button(actions,text="Download",command=self.download).pack(side="left")
-        ttk.Button(actions,text="Open folder",command=self.open_folder).pack(side="left",padx=8)
-        ttk.Label(actions,textvariable=self.status_var).pack(side="right")
-        ttk.Progressbar(self,variable=self.progress_var,maximum=100).pack(fill="x",padx=14,pady=8)
-        ttk.Label(self,textvariable=self.speed_var).pack(anchor="w",padx=14)
-        ttk.Label(self,textvariable=self.eta_var).pack(anchor="w",padx=14)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(3, weight=1)
+        header = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=28, pady=(24, 10))
+        header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(header, text="Video Downloader", font=ctk.CTkFont(size=30, weight="bold")).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(header, text=f"Version {APP_VERSION}  •  yt-dlp + FFmpeg", text_color=("gray45", "gray65")).grid(row=1, column=0, sticky="w", pady=(2, 0))
+        ctk.CTkButton(header, text="Check for updates", width=145, command=lambda: threading.Thread(target=self.check_updates, args=(False,), daemon=True).start()).grid(row=0, column=1, rowspan=2, padx=(20, 0))
+
+        url_card = ctk.CTkFrame(self, corner_radius=14)
+        url_card.grid(row=1, column=0, sticky="ew", padx=28, pady=10)
+        url_card.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(url_card, text="Video URL", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, columnspan=3, sticky="w", padx=18, pady=(15, 8))
+        self.url_entry = ctk.CTkEntry(url_card, textvariable=self.url_var, height=40, placeholder_text="Paste a video URL here…")
+        self.url_entry.grid(row=1, column=0, sticky="ew", padx=(18, 8), pady=(0, 16))
+        ctk.CTkButton(url_card, text="Paste", width=90, height=40, command=self.paste).grid(row=1, column=1, padx=4, pady=(0, 16))
+        ctk.CTkButton(url_card, text="Get info", width=100, height=40, command=self.info).grid(row=1, column=2, padx=(4, 18), pady=(0, 16))
+
+        options = ctk.CTkFrame(self, corner_radius=14)
+        options.grid(row=2, column=0, sticky="ew", padx=28, pady=10)
+        options.grid_columnconfigure(1, weight=1)
+        options.grid_columnconfigure(3, weight=1)
+        ctk.CTkLabel(options, text="Download options", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, columnspan=4, sticky="w", padx=18, pady=(15, 12))
+        ctk.CTkLabel(options, text="Quality").grid(row=1, column=0, sticky="w", padx=(18, 8), pady=7)
+        ctk.CTkOptionMenu(options, variable=self.quality_var, values=["Best", "2160p", "1440p", "1080p", "720p", "480p", "360p", "Audio only"], width=150).grid(row=1, column=1, sticky="ew", padx=8, pady=7)
+        ctk.CTkLabel(options, text="Format").grid(row=1, column=2, sticky="w", padx=(18, 8), pady=7)
+        ctk.CTkOptionMenu(options, variable=self.format_var, values=["MP4", "MKV", "WEBM"], width=130).grid(row=1, column=3, sticky="ew", padx=(8, 18), pady=7)
+        ctk.CTkLabel(options, text="Playback speed").grid(row=2, column=0, sticky="w", padx=(18, 8), pady=7)
+        speed_values = [f"{x / 10:.1f}×" for x in range(5, 21)]
+        ctk.CTkOptionMenu(options, variable=self.speed_var, values=speed_values, width=150).grid(row=2, column=1, sticky="ew", padx=8, pady=7)
+        ctk.CTkLabel(options, text="0.5× = slower  •  2.0× = faster", text_color=("gray45", "gray65")).grid(row=2, column=2, columnspan=2, sticky="w", padx=(18, 18), pady=7)
+        ctk.CTkLabel(options, text="Save to").grid(row=3, column=0, sticky="w", padx=(18, 8), pady=(7, 15))
+        ctk.CTkEntry(options, textvariable=self.folder_var, height=36).grid(row=3, column=1, columnspan=2, sticky="ew", padx=8, pady=(7, 15))
+        ctk.CTkButton(options, text="Browse…", width=110, height=36, command=self.browse).grid(row=3, column=3, padx=(8, 18), pady=(7, 15))
+
+        content = ctk.CTkFrame(self, corner_radius=14)
+        content.grid(row=3, column=0, sticky="nsew", padx=28, pady=10)
+        content.grid_columnconfigure(0, weight=1)
+        content.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(content, text="Information", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, sticky="w", padx=18, pady=(15, 8))
+        self.info_text = ctk.CTkTextbox(content, height=150, corner_radius=10)
+        self.info_text.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 15))
+        self.info_text.configure(state="disabled")
+
+        bottom = ctk.CTkFrame(self, fg_color="transparent")
+        bottom.grid(row=4, column=0, sticky="ew", padx=28, pady=(5, 20))
+        bottom.grid_columnconfigure(2, weight=1)
+        ctk.CTkButton(bottom, text="Download", width=150, height=44, font=ctk.CTkFont(size=14, weight="bold"), command=self.download).grid(row=0, column=0, padx=(0, 8))
+        ctk.CTkButton(bottom, text="Open folder", width=120, height=44, fg_color="transparent", border_width=1, command=self.open_folder).grid(row=0, column=1, padx=8)
+        ctk.CTkLabel(bottom, textvariable=self.status_var).grid(row=0, column=2, sticky="e", padx=(10, 0))
+        self.progress = ctk.CTkProgressBar(bottom, variable=self.progress_var, height=10)
+        self.progress.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(16, 6))
+        ctk.CTkLabel(bottom, textvariable=self.speed_status_var, text_color=("gray45", "gray65")).grid(row=2, column=0, sticky="w")
+        ctk.CTkLabel(bottom, textvariable=self.eta_var, text_color=("gray45", "gray65")).grid(row=2, column=2, sticky="e")
+
     def paste(self):
         try: self.url_var.set(self.clipboard_get())
         except tk.TclError: pass
-    def browse(self):
-        p=filedialog.askdirectory(initialdir=self.folder_var.get())
-        if p: self.folder_var.set(p)
-    def show_info(self, text):
-        self.info_text.config(state="normal"); self.info_text.delete("1.0","end"); self.info_text.insert("1.0",text); self.info_text.config(state="disabled")
-    def info(self):
-        url=self.url_var.get().strip()
-        if not url: return messagebox.showwarning(APP_NAME,"Paste a video URL first.")
-        self.status_var.set("Reading information…")
-        threading.Thread(target=self._info,args=(url,),daemon=True).start()
-    def _info(self,url):
-        try:
-            with yt_dlp.YoutubeDL({"quiet":True,"no_warnings":True,"skip_download":True}) as ydl:
-                d=ydl.extract_info(url,download=False)
-            dur=d.get("duration"); dur=f"{int(dur)//60}:{int(dur)%60:02d}" if dur else "—"
-            text=f"Title: {d.get('title','—')}\nUploader: {d.get('uploader','—')}\nDuration: {dur}\nViews: {d.get('view_count','—')}"
-            self.after(0,lambda:(self.show_info(text),self.status_var.set("Ready")))
-        except Exception as e:
-            self.after(0,lambda: self.status_var.set("Could not read video"))
-            self.after(0,lambda: messagebox.showerror(APP_NAME,str(e)))
-    def progress(self,d):
-        if d["status"]=="downloading":
-            total=d.get("total_bytes") or d.get("total_bytes_estimate") or 0
-            done=d.get("downloaded_bytes",0)
-            pct=(done/total*100) if total else 0
-            self.after(0,self.progress_var.set,pct)
-            self.after(0,self.speed_var.set,f"Speed: {d.get('_speed_str','')}")
-            self.after(0,self.eta_var.set,f"ETA: {d.get('_eta_str','')}")
-        elif d["status"]=="finished":
-            self.after(0,self.progress_var.set,100)
-    def download(self):
-        url=self.url_var.get().strip()
-        if not url: return messagebox.showwarning(APP_NAME,"Paste a video URL first.")
-        Path(self.folder_var.get()).mkdir(parents=True,exist_ok=True)
-        self.status_var.set("Downloading…"); self.progress_var.set(0)
-        threading.Thread(target=self._download,args=(url,),daemon=True).start()
-    def _download(self,url):
-        q=self.quality_var.get(); fmt=self.format_var.get().lower()
-        if q=="Audio only":
-            f="bestaudio/best"
-            post=[{"key":"FFmpegExtractAudio","preferredcodec":"mp3","preferredquality":"192"}]
-            merge_format=None
-        else:
-            heights={"2160p":2160,"1440p":1440,"1080p":1080,"720p":720,"480p":480,"360p":360}
-            f="bestvideo+bestaudio/best" if q=="Best" else f"bestvideo[height<={heights[q]}]+bestaudio/best[height<={heights[q]}]"
-            post=[]
-            merge_format=fmt
-        opts={"format":f,"outtmpl":str(Path(self.folder_var.get())/"%(title)s.%(ext)s"),
-              "progress_hooks":[self.progress],"noplaylist":False}
-        if merge_format:
-            opts["merge_output_format"]=merge_format
-        if post:
-            opts["postprocessors"]=post
-        ff=resource_path("ffmpeg.exe")
-        if os.path.exists(ff): opts["ffmpeg_location"]=str(Path(ff).parent)
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl: ydl.download([url])
-            self.after(0,lambda:self.status_var.set("Completed"))
-            self.after(0,lambda:messagebox.showinfo(APP_NAME,"Download completed."))
-        except Exception as e:
-            self.after(0,lambda:self.status_var.set("Error"))
-            self.after(0,lambda:messagebox.showerror(APP_NAME,str(e)))
-    def open_folder(self):
-        p=str(Path(self.folder_var.get()).resolve())
-        if sys.platform.startswith("win"): os.startfile(p)
-        elif sys.platform=="darwin": subprocess.Popen(["open",p])
-        else: subprocess.Popen(["xdg-open",p])
 
-if __name__=="__main__":
+    def browse(self):
+        p = filedialog.askdirectory(initialdir=self.folder_var.get())
+        if p: self.folder_var.set(p)
+
+    def show_info(self, text):
+        self.info_text.configure(state="normal")
+        self.info_text.delete("1.0", "end")
+        self.info_text.insert("1.0", text)
+        self.info_text.configure(state="disabled")
+
+    def info(self):
+        url = self.url_var.get().strip()
+        if not url: return messagebox.showwarning(APP_NAME, "Paste a video URL first.")
+        self.status_var.set("Reading information…")
+        threading.Thread(target=self._info, args=(url,), daemon=True).start()
+
+    def _info(self, url):
+        try:
+            with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True}) as ydl:
+                d = ydl.extract_info(url, download=False)
+            dur = d.get("duration")
+            dur = f"{int(dur) // 60}:{int(dur) % 60:02d}" if dur else "—"
+            text = f"Title: {d.get('title', '—')}\nUploader: {d.get('uploader', '—')}\nDuration: {dur}\nViews: {d.get('view_count', '—')}"
+            self.after(0, lambda: (self.show_info(text), self.status_var.set("Ready")))
+        except Exception as e:
+            self.after(0, lambda: self.status_var.set("Could not read video"))
+            self.after(0, lambda: messagebox.showerror(APP_NAME, str(e)))
+
+    def progress_hook(self, d):
+        if d["status"] == "downloading":
+            total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+            done = d.get("downloaded_bytes", 0)
+            pct = (done / total) if total else 0
+            self.after(0, self.progress_var.set, min(1, pct))
+            self.after(0, self.speed_status_var.set, f"Speed: {d.get('_speed_str', '')}")
+            self.after(0, self.eta_var.set, f"ETA: {d.get('_eta_str', '')}")
+        elif d["status"] == "finished":
+            self.after(0, self.progress_var.set, 1)
+
+    def download(self):
+        url = self.url_var.get().strip()
+        if not url: return messagebox.showwarning(APP_NAME, "Paste a video URL first.")
+        Path(self.folder_var.get()).mkdir(parents=True, exist_ok=True)
+        self.status_var.set("Downloading…")
+        self.progress_var.set(0)
+        threading.Thread(target=self._download, args=(url,), daemon=True).start()
+
+    def _download(self, url):
+        q = self.quality_var.get()
+        fmt = self.format_var.get().lower()
+        speed = float(self.speed_var.get().replace("×", ""))
+        audio_only = q == "Audio only"
+        if audio_only:
+            f = "bestaudio/best"
+            post = [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}]
+            merge_format = None
+        else:
+            heights = {"2160p": 2160, "1440p": 1440, "1080p": 1080, "720p": 720, "480p": 480, "360p": 360}
+            f = "bestvideo+bestaudio/best" if q == "Best" else f"bestvideo[height<={heights[q]}]+bestaudio/best[height<={heights[q]}]"
+            post = []
+            merge_format = fmt
+        opts = {"format": f, "outtmpl": str(Path(self.folder_var.get()) / "%(title)s.%(ext)s"), "progress_hooks": [self.progress_hook], "noplaylist": False}
+        if merge_format: opts["merge_output_format"] = merge_format
+        if post: opts["postprocessors"] = post
+        ff = resource_path("ffmpeg.exe")
+        if os.path.exists(ff): opts["ffmpeg_location"] = str(Path(ff).parent)
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                ydl.download([url])
+            if speed != 1.0:
+                for path in self._expected_files(info, audio_only, fmt):
+                    if path.exists(): self._change_speed(path, speed)
+            self.after(0, lambda: self.status_var.set("Completed"))
+            self.after(0, lambda: messagebox.showinfo(APP_NAME, "Download completed."))
+        except Exception as e:
+            self.after(0, lambda: self.status_var.set("Error"))
+            self.after(0, lambda: messagebox.showerror(APP_NAME, str(e)))
+
+    def _expected_files(self, info, audio_only, fmt):
+        entries = info.get("entries") if isinstance(info, dict) else None
+        if entries:
+            result = []
+            for entry in entries:
+                if entry: result.extend(self._expected_files(entry, audio_only, fmt))
+            return result
+        with yt_dlp.YoutubeDL({"outtmpl": str(Path(self.folder_var.get()) / "%(title)s.%(ext)s")}) as ydl:
+            filename = Path(ydl.prepare_filename(info))
+        return [filename.with_suffix(".mp3" if audio_only else f".{fmt}")]
+
+    def _change_speed(self, source, speed):
+        ffmpeg = resource_path("ffmpeg.exe")
+        if not os.path.exists(ffmpeg): raise RuntimeError("FFmpeg is required to change playback speed.")
+        temp = source.with_name(source.stem + ".speedtmp" + source.suffix)
+        ext = source.suffix.lower()
+        cmd = [ffmpeg, "-y", "-i", str(source)]
+        if ext == ".mp3":
+            cmd += ["-filter:a", f"atempo={speed}", "-c:a", "libmp3lame", "-b:a", "192k"]
+        else:
+            if ext == ".webm":
+                vcodec, acodec = "libvpx-vp9", "libopus"
+                extra = ["-crf", "32", "-b:v", "0", "-b:a", "128k"]
+            else:
+                vcodec, acodec = "libx264", "aac"
+                extra = ["-crf", "20", "-preset", "medium", "-b:a", "192k"]
+            cmd += ["-filter:v", f"setpts=PTS/{speed}", "-filter:a", f"atempo={speed}", "-c:v", vcodec, "-c:a", acodec] + extra
+        cmd += [str(temp)]
+        self.after(0, self.status_var.set, f"Applying {speed:.1f}× speed…")
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
+        os.replace(temp, source)
+
+    def open_folder(self):
+        p = str(Path(self.folder_var.get()).resolve())
+        if sys.platform.startswith("win"): os.startfile(p)
+        elif sys.platform == "darwin": subprocess.Popen(["open", p])
+        else: subprocess.Popen(["xdg-open", p])
+
+    def check_updates(self, silent):
+        try:
+            req = Request(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", headers={"Accept": "application/vnd.github+json", "User-Agent": APP_NAME})
+            with urlopen(req, timeout=8) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            latest = data.get("tag_name", "")
+            if version_tuple(latest) <= version_tuple(APP_VERSION):
+                if not silent:
+                    self.after(0, lambda: messagebox.showinfo(APP_NAME, f"You are using the latest version ({APP_VERSION})."))
+                return
+            asset = next((a for a in data.get("assets", []) if a.get("name", "").lower().endswith(".exe")), None)
+            if not asset: return
+            answer = [False]
+            def ask(): answer[0] = messagebox.askyesno(APP_NAME, f"A new version {latest} is available.\n\nUpdate now?")
+            self.after(0, ask)
+            while not answer[0] and self.winfo_exists():
+                self.update()
+                threading.Event().wait(0.05)
+            if answer[0]: self._install_update(asset["browser_download_url"], asset.get("name", "VideoDownloader-Setup.exe"))
+        except Exception as e:
+            if not silent:
+                self.after(0, lambda: messagebox.showerror(APP_NAME, f"Could not check for updates.\n\n{e}"))
+
+    def _install_update(self, url, filename):
+        temp = Path(os.environ.get("TEMP", str(Path.home() / "AppData/Local/Temp"))) / filename
+        self.after(0, lambda: self.status_var.set("Downloading update…"))
+        req = Request(url, headers={"User-Agent": APP_NAME})
+        with urlopen(req, timeout=30) as response, open(temp, "wb") as out:
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk: break
+                out.write(chunk)
+        subprocess.Popen([str(temp)])
+        self.after(0, self.destroy)
+
+if __name__ == "__main__":
     App().mainloop()
