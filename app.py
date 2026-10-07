@@ -40,6 +40,10 @@ class App(ctk.CTk):
         self.progress_var = tk.DoubleVar(value=0)
         self.speed_status_var = tk.StringVar(value="")
         self.eta_var = tk.StringVar(value="")
+        self.cancel_event = threading.Event()
+        self.download_active = False
+        self.config_file = Path(os.environ.get("APPDATA", str(Path.home()))) / APP_NAME / "settings.json"
+        self._load_settings()
         self._build()
         self.after(1500, lambda: threading.Thread(target=self.check_updates, args=(True,), daemon=True).start())
 
@@ -90,14 +94,34 @@ class App(ctk.CTk):
 
         bottom = ctk.CTkFrame(self, fg_color="transparent")
         bottom.grid(row=4, column=0, sticky="ew", padx=28, pady=(5, 20))
-        bottom.grid_columnconfigure(2, weight=1)
-        ctk.CTkButton(bottom, text="Download", width=150, height=44, font=ctk.CTkFont(size=14, weight="bold"), command=self.download).grid(row=0, column=0, padx=(0, 8))
-        ctk.CTkButton(bottom, text="Open folder", width=120, height=44, fg_color=("gray90", "gray20"), hover_color=("gray80", "gray30"), text_color=("gray15", "white"), border_width=1, command=self.open_folder).grid(row=0, column=1, padx=8)
-        ctk.CTkLabel(bottom, textvariable=self.status_var).grid(row=0, column=2, sticky="e", padx=(10, 0))
+        bottom.grid_columnconfigure(3, weight=1)
+        self.download_button = ctk.CTkButton(bottom, text="Download", width=150, height=44, font=ctk.CTkFont(size=14, weight="bold"), command=self.download)
+        self.download_button.grid(row=0, column=0, padx=(0, 8))
+        self.cancel_button = ctk.CTkButton(bottom, text="Cancel", width=100, height=44, fg_color=("gray80", "gray25"), hover_color=("gray70", "gray35"), command=self.cancel_download, state="disabled")
+        self.cancel_button.grid(row=0, column=1, padx=8)
+        ctk.CTkButton(bottom, text="Open folder", width=120, height=44, fg_color=("gray90", "gray20"), hover_color=("gray80", "gray30"), text_color=("gray15", "white"), border_width=1, command=self.open_folder).grid(row=0, column=2, padx=8)
+        ctk.CTkLabel(bottom, textvariable=self.status_var).grid(row=0, column=3, sticky="e", padx=(10, 0))
         self.progress = ctk.CTkProgressBar(bottom, variable=self.progress_var, height=10)
-        self.progress.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(16, 6))
+        self.progress.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(16, 6))
         ctk.CTkLabel(bottom, textvariable=self.speed_status_var, text_color=("gray45", "gray65")).grid(row=2, column=0, sticky="w")
-        ctk.CTkLabel(bottom, textvariable=self.eta_var, text_color=("gray45", "gray65")).grid(row=2, column=2, sticky="e")
+        ctk.CTkLabel(bottom, textvariable=self.eta_var, text_color=("gray45", "gray65")).grid(row=2, column=3, sticky="e")
+
+    def _load_settings(self):
+        try:
+            if self.config_file.exists():
+                data = json.loads(self.config_file.read_text(encoding="utf-8"))
+                folder = data.get("download_folder")
+                if folder and Path(folder).exists():
+                    self.folder_var.set(folder)
+        except Exception:
+            pass
+
+    def _save_settings(self):
+        try:
+            self.config_file.parent.mkdir(parents=True, exist_ok=True)
+            self.config_file.write_text(json.dumps({"download_folder": self.folder_var.get()}, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
     def paste(self):
         try: self.url_var.set(self.clipboard_get())
@@ -105,7 +129,9 @@ class App(ctk.CTk):
 
     def browse(self):
         p = filedialog.askdirectory(initialdir=self.folder_var.get())
-        if p: self.folder_var.set(p)
+        if p:
+            self.folder_var.set(p)
+            self._save_settings()
 
     def show_info(self, text):
         self.info_text.configure(state="normal")
@@ -124,14 +150,38 @@ class App(ctk.CTk):
             with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True}) as ydl:
                 d = ydl.extract_info(url, download=False)
             dur = d.get("duration")
-            dur = f"{int(dur) // 60}:{int(dur) % 60:02d}" if dur else "—"
-            text = f"Title: {d.get('title', '—')}\nUploader: {d.get('uploader', '—')}\nDuration: {dur}\nViews: {d.get('view_count', '—')}"
+            if dur:
+                seconds = int(dur)
+                dur = f"{seconds // 3600}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}" if seconds >= 3600 else f"{seconds // 60}:{seconds % 60:02d}"
+            else:
+                dur = "—"
+            width = d.get("width")
+            height = d.get("height")
+            resolution = f"{width}×{height}" if width and height else "—"
+            filesize = d.get("filesize") or d.get("filesize_approx")
+            size_text = f"{filesize / (1024 * 1024):.1f} MB" if filesize else "—"
+            views = d.get("view_count")
+            views_text = f"{views:,}" if isinstance(views, int) else "—"
+            upload_date = d.get("upload_date")
+            upload_date = f"{upload_date[:4]}-{upload_date[4:6]}-{upload_date[6:]}" if upload_date and len(upload_date) == 8 else "—"
+            text = (
+                f"Title: {d.get('title', '—')}\n"
+                f"Uploader: {d.get('uploader', '—')}\n"
+                f"Duration: {dur}\n"
+                f"Resolution: {resolution}\n"
+                f"Estimated size: {size_text}\n"
+                f"Views: {views_text}\n"
+                f"Upload date: {upload_date}\n"
+                f"Website: {d.get('webpage_url', url)}"
+            )
             self.after(0, lambda: (self.show_info(text), self.status_var.set("Ready")))
         except Exception as e:
             self.after(0, lambda: self.status_var.set("Could not read video"))
             self.after(0, lambda: messagebox.showerror(APP_NAME, str(e)))
 
     def progress_hook(self, d):
+        if self.cancel_event.is_set():
+            raise yt_dlp.utils.DownloadError("Download cancelled by user.")
         if d["status"] == "downloading":
             total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
             done = d.get("downloaded_bytes", 0)
@@ -143,12 +193,27 @@ class App(ctk.CTk):
             self.after(0, self.progress_var.set, 1)
 
     def download(self):
+        if self.download_active:
+            return
         url = self.url_var.get().strip()
         if not url: return messagebox.showwarning(APP_NAME, "Paste a video URL first.")
         Path(self.folder_var.get()).mkdir(parents=True, exist_ok=True)
+        self._save_settings()
+        self.cancel_event.clear()
+        self.download_active = True
+        self.download_button.configure(state="disabled")
+        self.cancel_button.configure(state="normal")
         self.status_var.set("Downloading…")
         self.progress_var.set(0)
+        self.speed_status_var.set("")
+        self.eta_var.set("")
         threading.Thread(target=self._download, args=(url,), daemon=True).start()
+
+    def cancel_download(self):
+        if self.download_active:
+            self.cancel_event.set()
+            self.status_var.set("Cancelling…")
+            self.cancel_button.configure(state="disabled")
 
     def _download(self, url):
         q = self.quality_var.get()
@@ -172,18 +237,45 @@ class App(ctk.CTk):
         if post: opts["postprocessors"] = post
         ff = resource_path("ffmpeg.exe")
         if os.path.exists(ff): opts["ffmpeg_location"] = str(Path(ff).parent)
+        expected_paths = []
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
+                expected_paths = self._expected_files(info, audio_only, fmt, outtmpl)
                 ydl.download([url])
+            if self.cancel_event.is_set():
+                raise yt_dlp.utils.DownloadError("Download cancelled by user.")
             if speed != 1.0:
-                for path in self._expected_files(info, audio_only, fmt, outtmpl):
+                for path in expected_paths:
+                    if self.cancel_event.is_set():
+                        raise yt_dlp.utils.DownloadError("Download cancelled by user.")
                     if path.exists(): self._change_speed(path, speed)
             self.after(0, lambda: self.status_var.set("Completed"))
             self.after(0, lambda: messagebox.showinfo(APP_NAME, "Download completed."))
+        except yt_dlp.utils.DownloadError as e:
+            if self.cancel_event.is_set() or "cancelled by user" in str(e).lower():
+                self._cleanup_partial_files(expected_paths)
+                self.after(0, lambda: self.status_var.set("Cancelled"))
+            else:
+                self.after(0, lambda: self.status_var.set("Error"))
+                self.after(0, lambda: messagebox.showerror(APP_NAME, str(e)))
         except Exception as e:
             self.after(0, lambda: self.status_var.set("Error"))
             self.after(0, lambda: messagebox.showerror(APP_NAME, str(e)))
+        finally:
+            self.download_active = False
+            self.cancel_event.clear()
+            self.after(0, lambda: self.download_button.configure(state="normal"))
+            self.after(0, lambda: self.cancel_button.configure(state="disabled"))
+
+    def _cleanup_partial_files(self, paths):
+        for path in paths:
+            for candidate in (path, Path(str(path) + ".part"), Path(str(path) + ".ytdl")):
+                try:
+                    if candidate.exists():
+                        candidate.unlink()
+                except OSError:
+                    pass
 
     def _expected_files(self, info, audio_only, fmt, outtmpl):
         entries = info.get("entries") if isinstance(info, dict) else None
