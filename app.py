@@ -12,7 +12,7 @@ import customtkinter as ctk
 import yt_dlp
 
 APP_NAME = "Video Downloader"
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.2.1"
 GITHUB_REPO = "tereshchenkopavlo-gif/VideoDownloader"
 
 def resource_path(name):
@@ -92,7 +92,7 @@ class App(ctk.CTk):
         bottom.grid(row=4, column=0, sticky="ew", padx=28, pady=(5, 20))
         bottom.grid_columnconfigure(2, weight=1)
         ctk.CTkButton(bottom, text="Download", width=150, height=44, font=ctk.CTkFont(size=14, weight="bold"), command=self.download).grid(row=0, column=0, padx=(0, 8))
-        ctk.CTkButton(bottom, text="Open folder", width=120, height=44, fg_color="transparent", border_width=1, command=self.open_folder).grid(row=0, column=1, padx=8)
+        ctk.CTkButton(bottom, text="Open folder", width=120, height=44, fg_color=("gray90", "gray20"), hover_color=("gray80", "gray30"), text_color=("gray15", "white"), border_width=1, command=self.open_folder).grid(row=0, column=1, padx=8)
         ctk.CTkLabel(bottom, textvariable=self.status_var).grid(row=0, column=2, sticky="e", padx=(10, 0))
         self.progress = ctk.CTkProgressBar(bottom, variable=self.progress_var, height=10)
         self.progress.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(16, 6))
@@ -164,7 +164,10 @@ class App(ctk.CTk):
             f = "bestvideo+bestaudio/best" if q == "Best" else f"bestvideo[height<={heights[q]}]+bestaudio/best[height<={heights[q]}]"
             post = []
             merge_format = fmt
-        opts = {"format": f, "outtmpl": str(Path(self.folder_var.get()) / "%(title)s.%(ext)s"), "progress_hooks": [self.progress_hook], "noplaylist": False}
+        folder = Path(self.folder_var.get())
+        speed_suffix = "" if speed == 1.0 else f" [{speed:.1f}x]"
+        outtmpl = str(folder / f"%(title)s{speed_suffix}.%(ext)s")
+        opts = {"format": f, "outtmpl": outtmpl, "progress_hooks": [self.progress_hook], "noplaylist": False}
         if merge_format: opts["merge_output_format"] = merge_format
         if post: opts["postprocessors"] = post
         ff = resource_path("ffmpeg.exe")
@@ -174,7 +177,7 @@ class App(ctk.CTk):
                 info = ydl.extract_info(url, download=False)
                 ydl.download([url])
             if speed != 1.0:
-                for path in self._expected_files(info, audio_only, fmt):
+                for path in self._expected_files(info, audio_only, fmt, outtmpl):
                     if path.exists(): self._change_speed(path, speed)
             self.after(0, lambda: self.status_var.set("Completed"))
             self.after(0, lambda: messagebox.showinfo(APP_NAME, "Download completed."))
@@ -182,14 +185,14 @@ class App(ctk.CTk):
             self.after(0, lambda: self.status_var.set("Error"))
             self.after(0, lambda: messagebox.showerror(APP_NAME, str(e)))
 
-    def _expected_files(self, info, audio_only, fmt):
+    def _expected_files(self, info, audio_only, fmt, outtmpl):
         entries = info.get("entries") if isinstance(info, dict) else None
         if entries:
             result = []
             for entry in entries:
-                if entry: result.extend(self._expected_files(entry, audio_only, fmt))
+                if entry: result.extend(self._expected_files(entry, audio_only, fmt, outtmpl))
             return result
-        with yt_dlp.YoutubeDL({"outtmpl": str(Path(self.folder_var.get()) / "%(title)s.%(ext)s")}) as ydl:
+        with yt_dlp.YoutubeDL({"outtmpl": outtmpl}) as ydl:
             filename = Path(ydl.prepare_filename(info))
         return [filename.with_suffix(".mp3" if audio_only else f".{fmt}")]
 
@@ -211,7 +214,7 @@ class App(ctk.CTk):
             cmd += ["-filter:v", f"setpts=PTS/{speed}", "-filter:a", f"atempo={speed}", "-c:v", vcodec, "-c:a", acodec] + extra
         cmd += [str(temp)]
         self.after(0, self.status_var.set, f"Applying {speed:.1f}× speed…")
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True, creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0))
         os.replace(temp, source)
 
     def open_folder(self):
