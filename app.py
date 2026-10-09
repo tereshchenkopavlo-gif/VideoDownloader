@@ -13,7 +13,7 @@ import customtkinter as ctk
 import yt_dlp
 
 APP_NAME = "Video Downloader"
-APP_VERSION = "2.2.4"
+APP_VERSION = "2.2.5"
 GITHUB_REPO = "tereshchenkopavlo-gif/VideoDownloader"
 
 def resource_path(name):
@@ -79,7 +79,7 @@ class App(ctk.CTk):
         ctk.CTkLabel(options, text="Format").grid(row=1, column=2, sticky="w", padx=(18, 8), pady=7)
         ctk.CTkOptionMenu(options, variable=self.format_var, values=["MP4", "MKV", "WEBM"], width=130).grid(row=1, column=3, sticky="ew", padx=(8, 18), pady=7)
         ctk.CTkLabel(options, text="Playback speed").grid(row=2, column=0, sticky="w", padx=(18, 8), pady=7)
-        speed_values = [f"{x / 10:.1f}×" for x in range(5, 21)]
+        speed_values = [f"{x / 100:.1f}×" if x % 10 == 0 else f"{x / 100:.2f}×" for x in range(50, 201, 5)]
         ctk.CTkOptionMenu(options, variable=self.speed_var, values=speed_values, width=150).grid(row=2, column=1, sticky="ew", padx=8, pady=7)
         ctk.CTkLabel(options, text="0.5× = slower  •  2.0× = faster", text_color=("gray45", "gray65")).grid(row=2, column=2, columnspan=2, sticky="w", padx=(18, 18), pady=7)
         ctk.CTkLabel(options, text="Save to").grid(row=3, column=0, sticky="w", padx=(18, 8), pady=(7, 15))
