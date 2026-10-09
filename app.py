@@ -8,11 +8,12 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 import json
 import re
+import traceback
 import customtkinter as ctk
 import yt_dlp
 
 APP_NAME = "Video Downloader"
-APP_VERSION = "2.2.3"
+APP_VERSION = "2.2.4"
 GITHUB_REPO = "tereshchenkopavlo-gif/VideoDownloader"
 
 def resource_path(name):
@@ -42,7 +43,9 @@ class App(ctk.CTk):
         self.eta_var = tk.StringVar(value="")
         self.cancel_event = threading.Event()
         self.download_active = False
-        self.config_file = Path(os.environ.get("APPDATA", str(Path.home()))) / APP_NAME / "settings.json"
+        self.config_dir = Path(os.environ.get("APPDATA", str(Path.home()))) / APP_NAME
+        self.config_file = self.config_dir / "settings.json"
+        self.log_file = self.config_dir / "error.log"
         self._load_settings()
         self._build()
         self.after(1500, lambda: threading.Thread(target=self.check_updates, args=(True,), daemon=True).start())
@@ -106,6 +109,25 @@ class App(ctk.CTk):
         ctk.CTkLabel(bottom, textvariable=self.speed_status_var, text_color=("gray45", "gray65")).grid(row=2, column=0, sticky="w")
         ctk.CTkLabel(bottom, textvariable=self.eta_var, text_color=("gray45", "gray65")).grid(row=2, column=3, sticky="e")
 
+    def _record_error(self, context, error):
+        try:
+            self.config_dir.mkdir(parents=True, exist_ok=True)
+            with self.log_file.open("a", encoding="utf-8") as log:
+                from datetime import datetime
+                log.write(f"\n[{datetime.now().isoformat(timespec='seconds')}] {context}\n")
+                log.write("".join(traceback.format_exception(type(error), error, error.__traceback__)))
+                log.write("\n")
+        except Exception:
+            pass
+
+    def _ydl_options(self, **overrides):
+        options = {"quiet": True, "no_warnings": False}
+        deno = resource_path("deno.exe")
+        if os.path.isfile(deno):
+            options["js_runtimes"] = {"deno": {"path": deno}}
+        options.update(overrides)
+        return options
+
     def _load_settings(self):
         try:
             if self.config_file.exists():
@@ -147,7 +169,7 @@ class App(ctk.CTk):
 
     def _info(self, url):
         try:
-            with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True}) as ydl:
+            with yt_dlp.YoutubeDL(self._ydl_options(skip_download=True)) as ydl:
                 d = ydl.extract_info(url, download=False)
             dur = d.get("duration")
             if dur:
@@ -176,8 +198,10 @@ class App(ctk.CTk):
             )
             self.after(0, lambda: (self.show_info(text), self.status_var.set("Ready")))
         except Exception as e:
+            self._record_error("Get info failed", e)
+            details = str(e).strip() or repr(e)
             self.after(0, lambda: self.status_var.set("Could not read video"))
-            self.after(0, lambda: messagebox.showerror(APP_NAME, str(e)))
+            self.after(0, lambda details=details: messagebox.showerror(APP_NAME, f"Could not read video information.\n\n{details}\n\nDiagnostic log: {self.log_file}"))
 
     def progress_hook(self, d):
         if self.cancel_event.is_set():
@@ -232,7 +256,7 @@ class App(ctk.CTk):
         folder = Path(self.folder_var.get())
         speed_suffix = "" if speed == 1.0 else f" [{speed:.1f}x]"
         outtmpl = str(folder / f"%(title)s{speed_suffix}.%(ext)s")
-        opts = {"format": f, "outtmpl": outtmpl, "progress_hooks": [self.progress_hook], "postprocessor_hooks": [self._postprocessor_hook], "noplaylist": False}
+        opts = self._ydl_options(format=f, outtmpl=outtmpl, progress_hooks=[self.progress_hook], postprocessor_hooks=[self._postprocessor_hook], noplaylist=False)
         if merge_format: opts["merge_output_format"] = merge_format
         if post: opts["postprocessors"] = post
         ff = resource_path("ffmpeg.exe")
@@ -257,11 +281,15 @@ class App(ctk.CTk):
                 self._cleanup_partial_files(expected_paths)
                 self.after(0, lambda: self.status_var.set("Cancelled"))
             else:
+                self._record_error("Download failed", e)
+                details = str(e).strip() or repr(e)
                 self.after(0, lambda: self.status_var.set("Error"))
-                self.after(0, lambda: messagebox.showerror(APP_NAME, str(e)))
+                self.after(0, lambda details=details: messagebox.showerror(APP_NAME, f"Download failed.\n\n{details}\n\nDiagnostic log: {self.log_file}"))
         except Exception as e:
+            self._record_error("Unexpected download error", e)
+            details = str(e).strip() or repr(e)
             self.after(0, lambda: self.status_var.set("Error"))
-            self.after(0, lambda: messagebox.showerror(APP_NAME, str(e)))
+            self.after(0, lambda details=details: messagebox.showerror(APP_NAME, f"Unexpected error.\n\n{details}\n\nDiagnostic log: {self.log_file}"))
         finally:
             self.download_active = False
             self.cancel_event.clear()
