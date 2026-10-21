@@ -5,6 +5,7 @@ A modern Windows desktop video downloader based on yt-dlp and FFmpeg.
 ## Features
 
 - YouTube and other sites supported by yt-dlp
+- Playlist URLs: download all entries in order, with numbered filenames; optional single-video mode
 - Quality selection from 360p to 2160p
 - MP4, MKV and WEBM
 - Audio-only MP3
