@@ -13,7 +13,7 @@ import customtkinter as ctk
 import yt_dlp
 
 APP_NAME = "Video Downloader"
-APP_VERSION = "2.2.5"
+APP_VERSION = "2.2.6"
 GITHUB_REPO = "tereshchenkopavlo-gif/VideoDownloader"
 
 def resource_path(name):
@@ -37,6 +37,7 @@ class App(ctk.CTk):
         self.quality_var = tk.StringVar(value="Best")
         self.format_var = tk.StringVar(value="MP4")
         self.speed_var = tk.StringVar(value="1.0×")
+        self.playlist_var = tk.BooleanVar(value=True)
         self.status_var = tk.StringVar(value="Ready")
         self.progress_var = tk.DoubleVar(value=0)
         self.speed_status_var = tk.StringVar(value="")
@@ -65,9 +66,10 @@ class App(ctk.CTk):
         url_card.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(url_card, text="Video URL", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, columnspan=3, sticky="w", padx=18, pady=(15, 8))
         self.url_entry = ctk.CTkEntry(url_card, textvariable=self.url_var, height=40, placeholder_text="Paste a video URL here…")
-        self.url_entry.grid(row=1, column=0, sticky="ew", padx=(18, 8), pady=(0, 16))
-        ctk.CTkButton(url_card, text="Paste", width=90, height=40, command=self.paste).grid(row=1, column=1, padx=4, pady=(0, 16))
-        ctk.CTkButton(url_card, text="Get info", width=100, height=40, command=self.info).grid(row=1, column=2, padx=(4, 18), pady=(0, 16))
+        self.url_entry.grid(row=1, column=0, sticky="ew", padx=(18, 8), pady=(0, 8))
+        ctk.CTkButton(url_card, text="Paste", width=90, height=40, command=self.paste).grid(row=1, column=1, padx=4, pady=(0, 8))
+        ctk.CTkButton(url_card, text="Get info", width=100, height=40, command=self.info).grid(row=1, column=2, padx=(4, 18), pady=(0, 8))
+        ctk.CTkCheckBox(url_card, text="Download entire playlist (when a playlist URL is provided)", variable=self.playlist_var).grid(row=2, column=0, columnspan=3, sticky="w", padx=18, pady=(0, 14))
 
         options = ctk.CTkFrame(self, corner_radius=14)
         options.grid(row=2, column=0, sticky="ew", padx=28, pady=10)
@@ -169,8 +171,18 @@ class App(ctk.CTk):
 
     def _info(self, url):
         try:
-            with yt_dlp.YoutubeDL(self._ydl_options(skip_download=True)) as ydl:
+            with yt_dlp.YoutubeDL(self._ydl_options(skip_download=True, noplaylist=not self.playlist_var.get())) as ydl:
                 d = ydl.extract_info(url, download=False)
+            if d.get("_type") in ("playlist", "multi_video"):
+                entries = d.get("entries") or []
+                count = d.get("playlist_count") or d.get("entry_count") or len(entries)
+                name = d.get("title") or "Playlist"
+                sample = [e.get("title", "Untitled") for e in entries[:10] if e]
+                text = f"Playlist: {name}\nVideos: {count}\n\n" + "\n".join(f"{i}. {title}" for i, title in enumerate(sample, 1))
+                if len(entries) > 10:
+                    text += f"\n... and {len(entries) - 10} more"
+                self.after(0, lambda text=text: (self.show_info(text), self.status_var.set("Ready")))
+                return
             dur = d.get("duration")
             if dur:
                 seconds = int(dur)
@@ -211,6 +223,11 @@ class App(ctk.CTk):
             done = d.get("downloaded_bytes", 0)
             pct = (done / total) if total else 0
             self.after(0, self.progress_var.set, min(1, pct))
+            playlist_index = d.get("info_dict", {}).get("playlist_index")
+            playlist_count = d.get("info_dict", {}).get("playlist_count")
+            if playlist_index is not None:
+                marker = f"Video {playlist_index}/{playlist_count}" if playlist_count else f"Video {playlist_index}"
+                self.after(0, self.status_var.set, f"Downloading playlist — {marker}")
             self.after(0, self.speed_status_var.set, f"Speed: {d.get('_speed_str', '')}")
             self.after(0, self.eta_var.set, f"ETA: {d.get('_eta_str', '')}")
         elif d["status"] == "finished":
@@ -254,9 +271,9 @@ class App(ctk.CTk):
             post = []
             merge_format = fmt
         folder = Path(self.folder_var.get())
-        speed_suffix = "" if speed == 1.0 else f" [{speed:.1f}x]"
+        speed_suffix = "" if speed == 1.0 else f" [{speed:g}x]"
         outtmpl = str(folder / f"%(title)s{speed_suffix}.%(ext)s")
-        opts = self._ydl_options(format=f, outtmpl=outtmpl, progress_hooks=[self.progress_hook], postprocessor_hooks=[self._postprocessor_hook], noplaylist=False)
+        opts = self._ydl_options(format=f, outtmpl=outtmpl, progress_hooks=[self.progress_hook], postprocessor_hooks=[self._postprocessor_hook], noplaylist=not self.playlist_var.get())
         if merge_format: opts["merge_output_format"] = merge_format
         if post: opts["postprocessors"] = post
         ff = resource_path("ffmpeg.exe")
@@ -265,6 +282,11 @@ class App(ctk.CTk):
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
+                if info.get("_type") in ("playlist", "multi_video"):
+                    outtmpl = str(folder / f"%(playlist_index)03d - %(title)s [%(id)s]{speed_suffix}.%(ext)s")
+                    ydl.params["outtmpl"] = {"default": outtmpl}
+                    count = len(info.get("entries") or [])
+                    self.after(0, self.status_var.set, f"Downloading playlist ({count} videos)…")
                 expected_paths = self._expected_files(info, audio_only, fmt, outtmpl)
                 ydl.download([url])
             if self.cancel_event.is_set():
