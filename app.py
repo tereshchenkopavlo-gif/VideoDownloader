@@ -13,7 +13,7 @@ import customtkinter as ctk
 import yt_dlp
 
 APP_NAME = "Video Downloader"
-APP_VERSION = "2.2.6"
+APP_VERSION = "2.2.7"
 GITHUB_REPO = "tereshchenkopavlo-gif/VideoDownloader"
 
 def resource_path(name):
@@ -380,7 +380,7 @@ class App(ctk.CTk):
             cmd += ["-filter:v", f"setpts=PTS/{speed}", "-filter:a", f"atempo={speed}", "-c:v", vcodec, "-c:a", acodec] + extra
         cmd += ["-progress", "pipe:1", "-nostats", str(temp)]
 
-        self.after(0, self.status_var.set, f"Applying {speed:.1f}× speed…")
+        self.after(0, self.status_var.set, f"Applying {speed:g}× speed…")
         self.after(0, self.progress_var.set, 0)
         self.after(0, self.speed_status_var.set, "Processing with FFmpeg…")
         self.after(0, self.eta_var.set, "")
@@ -410,7 +410,7 @@ class App(ctk.CTk):
                             current = int(line.split("=", 1)[1]) / 1_000_000
                             pct = max(0.0, min(1.0, current / duration))
                             self.after(0, self.progress_var.set, pct)
-                            self.after(0, self.speed_status_var.set, f"Applying {speed:.1f}× speed… {pct * 100:.0f}%")
+                            self.after(0, self.speed_status_var.set, f"Applying {speed:g}× speed… {pct * 100:.0f}%")
                         except ValueError:
                             pass
                     continue
