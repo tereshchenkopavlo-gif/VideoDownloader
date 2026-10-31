@@ -6,6 +6,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from pathlib import Path
 from urllib.request import Request, urlopen
+import ssl
+import certifi
 import json
 import re
 import traceback
@@ -13,7 +15,7 @@ import customtkinter as ctk
 import yt_dlp
 
 APP_NAME = "Video Downloader"
-APP_VERSION = "2.2.7"
+APP_VERSION = "2.2.8"
 GITHUB_REPO = "tereshchenkopavlo-gif/VideoDownloader"
 
 def resource_path(name):
@@ -450,7 +452,7 @@ class App(ctk.CTk):
     def check_updates(self, silent):
         try:
             req = Request(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", headers={"Accept": "application/vnd.github+json", "User-Agent": APP_NAME})
-            with urlopen(req, timeout=8) as response:
+            with urlopen(req, timeout=8, context=ssl.create_default_context(cafile=certifi.where())) as response:
                 data = json.loads(response.read().decode("utf-8"))
             latest = data.get("tag_name", "")
             if version_tuple(latest) <= version_tuple(APP_VERSION):
@@ -474,7 +476,7 @@ class App(ctk.CTk):
         temp = Path(os.environ.get("TEMP", str(Path.home() / "AppData/Local/Temp"))) / filename
         self.after(0, lambda: self.status_var.set("Downloading update…"))
         req = Request(url, headers={"User-Agent": APP_NAME})
-        with urlopen(req, timeout=30) as response, open(temp, "wb") as out:
+        with urlopen(req, timeout=30, context=ssl.create_default_context(cafile=certifi.where())) as response, open(temp, "wb") as out:
             while True:
                 chunk = response.read(1024 * 1024)
                 if not chunk: break
