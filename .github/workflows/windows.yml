@@ -51,7 +51,7 @@ jobs:
 
       - name: Build EXE
         run: |
-          pyinstaller --noconfirm --clean --onefile --windowed --name VideoDownloader --collect-all yt_dlp_ejs --add-binary "ffmpeg.exe;." --add-binary "ffprobe.exe;." --add-binary "deno.exe;." app.py
+          pyinstaller --noconfirm --clean --onefile --windowed --name VideoDownloader --collect-all yt_dlp_ejs --collect-data certifi --add-binary "ffmpeg.exe;." --add-binary "ffprobe.exe;." --add-binary "deno.exe;." app.py
 
       - name: Install Inno Setup
         shell: pwsh
